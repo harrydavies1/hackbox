@@ -1,0 +1,21 @@
+#!/bin/bash
+
+TARGET="$1"
+
+if [ -z "$TARGET" ]; then
+    echo "Usage: security-recon <authorized-target>"
+    exit 1
+fi
+
+echo "[+] Starting discovery against: $TARGET"
+echo
+
+python "$HOME/security/recon/discover.py" "$TARGET"
+
+LATEST_REPORT=$(ls -t "$HOME/security/recon"/scan_*.nmap | head -n 1)
+
+echo
+echo "[+] Discovery summary"
+echo "====================="
+
+python "$HOME/security/recon/summary.py" "$LATEST_REPORT"
