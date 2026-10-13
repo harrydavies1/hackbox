@@ -1,0 +1,33 @@
+# Local runtime data and potentially sensitive network captures
+reports/
+network/
+labs/
+*.pcap
+*.pcapng
+*.cap
+*.log
+*.nmap
+*.xml
+*.jsonl
+*.csv
+*.backup
+*.bak
+.env
+.env.*
+*.key
+*.pem
+*.p12
+*.pfx
+id_rsa*
+id_ed25519*
+*.sqlite*
+*.db
+
+# Python and editor files
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.DS_Store
+.vscode/
+.idea/
