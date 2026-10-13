@@ -1,0 +1,603 @@
+#!/usr/bin/env bash
+# Hackbox: Raspberry Pi terminal toolkit for authorized network assessment.
+# Reconstructed from the Hackbox code and menu described in prior chats.
+
+SECURITY_DIR="$HOME/security"
+RECON_DIR="$SECURITY_DIR/recon"
+NETWORK_DIR="$SECURITY_DIR/network"
+REPORT_DIR="$SECURITY_DIR/reports"
+LAB_DIR="$SECURITY_DIR/labs"
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(dirname "$SCRIPT_DIR")"
+mkdir -p "$RECON_DIR" "$NETWORK_DIR" "$REPORT_DIR" "$LAB_DIR"
+
+pause_menu() {
+    echo
+    read -rp "Press Enter to return to Hackbox... " _
+}
+
+header() {
+    clear 2>/dev/null || true
+    echo '============================================================'
+    echo '                       HACKBOX'
+    echo '           Raspberry Pi Security Toolkit'
+    echo '============================================================'
+    echo ' Authorized networks, devices and captures only.'
+    echo
+}
+
+check_command() {
+    if ! command -v "$1" >/dev/null 2>&1; then
+        echo "[-] Required command not found: $1"
+        return 1
+    fi
+}
+
+network_inventory() {
+
+    header
+
+    echo "[ LAN DEVICE INVENTORY ]"
+    echo "========================"
+    echo
+    echo "Collecting devices from the local neighbour table."
+    echo
+
+    timestamp=$(date +"%Y%m%d_%H%M%S")
+    report="$REPORT_DIR/network_inventory_${timestamp}.txt"
+
+    echo "================================================================================"
+    printf "%-16s %-20s %-32s\n" \
+        "IP ADDRESS" "MAC ADDRESS" "HOSTNAME"
+    echo "================================================================================"
+
+    {
+        echo "PI SECURITY TOOLKIT"
+        echo "LAN DEVICE INVENTORY"
+        echo "===================="
+        echo
+        echo "Time: $(date)"
+        echo
+        printf "%-16s %-20s %-32s\n" \
+            "IP ADDRESS" "MAC ADDRESS" "HOSTNAME"
+        echo "================================================================================"
+    } > "$report"
+
+    ip neigh show |
+    awk '$1 ~ /^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$/ && $5 != "" {
+        print $1 "|" $5
+    }' |
+    while IFS="|" read -r ip mac; do
+
+        hostname="unknown"
+
+        # Try reverse DNS
+        dns_name=$(getent hosts "$ip" 2>/dev/null | awk '{print $2; exit}')
+
+        if [ -n "$dns_name" ]; then
+            hostname="$dns_name"
+        fi
+
+        # Try mDNS / Avahi
+        if [ "$hostname" = "unknown" ] &&
+           command -v avahi-resolve-address >/dev/null 2>&1; then
+
+            mdns_name=$(avahi-resolve-address "$ip" 2>/dev/null |
+                awk '{print $2; exit}')
+
+            if [ -n "$mdns_name" ]; then
+                hostname="$mdns_name"
+            fi
+        fi
+
+        printf "%-16s %-20s %-32s\n" \
+            "$ip" "$mac" "$hostname"
+
+        printf "%-16s %-20s %-32s\n" \
+            "$ip" "$mac" "$hostname" >> "$report"
+
+    done
+
+    echo
+    echo "[+] Raw neighbour table:"
+    echo
+
+    ip neigh show
+
+    echo
+    echo "[+] Inventory saved:"
+    echo "    $report"
+
+    pause_menu
+}
+
+nmap_device_identification() {
+
+    header
+
+    echo "[ NMAP OS / DEVICE IDENTIFICATION ]"
+    echo "===================================="
+    echo
+    echo "This performs OS and device fingerprinting against"
+    echo "devices on your authorized local network."
+    echo
+
+    if ! check_command nmap; then
+        pause_menu
+        return
+    fi
+
+    timestamp=$(date +"%Y%m%d_%H%M%S")
+    report="$REPORT_DIR/nmap_device_id_${timestamp}.txt"
+
+    echo "[+] Discovering local devices..."
+    echo
+
+    targets=$(ip neigh show |
+        awk '$1 ~ /^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$/ {
+            print $1
+        }' |
+        sort -V |
+        uniq)
+
+    if [ -z "$targets" ]; then
+        echo "[-] No IPv4 devices found in the neighbour table."
+        pause_menu
+        return
+    fi
+
+    echo "[+] Targets:"
+    echo "$targets"
+    echo
+
+    echo "[+] Running Nmap OS/device detection..."
+    echo "[+] This may take a little while."
+    echo
+
+    # Intentional word splitting: one IPv4 address per word from ip neigh.
+    # shellcheck disable=SC2086
+    sudo nmap \
+        -O \
+        --osscan-guess \
+        -T3 \
+        $targets \
+        -oN "$report"
+
+    echo
+    echo "===================================="
+    echo "[+] Identification complete"
+    echo "===================================="
+    echo
+    echo "[+] Report saved:"
+    echo "    $report"
+    echo
+
+    pause_menu
+}
+
+network_discovery() {
+    header
+    echo '[ NETWORK DISCOVERY ]'
+    echo
+    read -rp 'Authorized IP or CIDR network: ' target
+    if [ -z "$target" ]; then
+        echo '[-] No target entered.'
+        pause_menu
+        return
+    fi
+
+    if [ -f "$REPO_ROOT/recon/discover.py" ]; then
+        python3 "$REPO_ROOT/recon/discover.py" "$target"
+    elif command -v security-recon >/dev/null 2>&1; then
+        security-recon "$target"
+    elif [ -f "$RECON_DIR/discover.py" ]; then
+        python3 "$RECON_DIR/discover.py" "$target"
+    else
+        echo '[-] Discovery script not found.'
+    fi
+    pause_menu
+}
+
+network_info() {
+    header
+    echo '[ NETWORK INFORMATION ]'
+    echo
+    ip -br addr
+    echo
+    ip route
+    echo
+    ip neigh show
+    pause_menu
+}
+
+service_scan() {
+    header
+    echo '[ SERVICE DISCOVERY ]'
+    echo 'Use only against hosts you own or are authorized to assess.'
+    echo
+    check_command nmap || { pause_menu; return; }
+    read -rp 'Authorized target IP or hostname: ' target
+    if [ -z "$target" ]; then
+        echo '[-] No target entered.'
+        pause_menu
+        return
+    fi
+    timestamp=$(date +"%Y%m%d_%H%M%S")
+    report="$REPORT_DIR/service_scan_${timestamp}.nmap"
+    nmap -sV --top-ports 100 "$target" -oN "$report"
+    echo "[+] Report saved: $report"
+    pause_menu
+}
+
+dns_lookup() {
+    header
+    echo '[ DNS LOOKUP ]'
+    echo
+    check_command dig || { pause_menu; return; }
+    read -rp 'Domain to query: ' domain
+    if [ -z "$domain" ]; then
+        echo '[-] No domain entered.'
+        pause_menu
+        return
+    fi
+    for kind in A AAAA MX NS TXT; do
+        echo
+        echo "--- $kind ---"
+        dig +noall +answer "$domain" "$kind"
+    done
+    pause_menu
+}
+
+packet_capture() {
+    header
+    echo '[ PACKET CAPTURE ]'
+    echo 'Capture only traffic you are permitted to observe.'
+    echo
+    check_command tcpdump || { pause_menu; return; }
+    ip -br link
+    echo
+    read -rp 'Capture interface (e.g. eth0): ' interface
+    read -rp 'Duration in seconds [30]: ' duration
+    read -rp 'Optional tcpdump filter (e.g. port 53): ' filter
+    duration="${duration:-30}"
+    if [[ ! "$duration" =~ ^[0-9]+$ ]] || (( duration < 1 || duration > 3600 )); then
+        echo '[-] Enter a duration between 1 and 3600 seconds.'
+        pause_menu
+        return
+    fi
+    if [ -z "$interface" ]; then
+        echo '[-] An interface is required.'
+        pause_menu
+        return
+    fi
+    timestamp=$(date +"%Y%m%d_%H%M%S")
+    capture="$NETWORK_DIR/capture_${timestamp}.pcap"
+    echo "[+] Capturing for ${duration}s into $capture"
+    if [ -n "$filter" ]; then
+        # Expand only the user's deliberately supplied BPF expression into argv.
+        read -r -a bpf_args <<< "$filter"
+        sudo timeout --signal=INT "$duration" tcpdump -i "$interface" -U -w "$capture" "${bpf_args[@]}"
+    else
+        sudo timeout --signal=INT "$duration" tcpdump -i "$interface" -U -w "$capture"
+    fi
+    echo "[+] Capture saved: $capture"
+    pause_menu
+}
+
+wifi_recon() {
+    header
+    echo '[ WI-FI RECONNAISSANCE ]'
+    echo 'Your Pi 3 built-in Wi-Fi normally supports managed/AP, not monitor mode.'
+    echo
+    check_command iw || { pause_menu; return; }
+    iw dev
+    echo
+    if command -v nmcli >/dev/null 2>&1; then
+        nmcli -f IN-USE,SSID,CHAN,FREQ,SIGNAL,SECURITY device wifi list
+    else
+        echo '[-] nmcli not installed; skipping Wi-Fi scan listing.'
+    fi
+    pause_menu
+}
+
+wifi_capture() {
+    header
+    echo '[ WI-FI PASSIVE CAPTURE ]'
+    echo 'A compatible monitor-mode adapter/interface is required.'
+    echo 'Capture only wireless traffic you are authorized to monitor.'
+    echo
+    check_command tshark || { pause_menu; return; }
+    iw dev
+    echo
+    read -rp 'Existing monitor-mode interface: ' interface
+    read -rp 'Capture duration in seconds [30]: ' duration
+    duration="${duration:-30}"
+    if [ -z "$interface" ] || [[ ! "$duration" =~ ^[0-9]+$ ]] || (( duration < 1 || duration > 3600 )); then
+        echo '[-] Enter an interface and a duration from 1 to 3600 seconds.'
+        pause_menu
+        return
+    fi
+    timestamp=$(date +"%Y%m%d_%H%M%S")
+    capture="$NETWORK_DIR/wifi_${timestamp}.pcapng"
+    sudo timeout --signal=INT "$duration" tshark -i "$interface" -w "$capture"
+    echo "[+] Capture saved: $capture"
+    pause_menu
+}
+
+pcap_analysis() {
+    header
+    echo '[ PCAP ANALYSIS ]'
+    echo
+    check_command tshark || { pause_menu; return; }
+    read -rp 'Path to an authorized PCAP/PCAPNG file: ' capture
+    if [ ! -f "$capture" ]; then
+        echo '[-] Capture file not found.'
+        pause_menu
+        return
+    fi
+    if command -v capinfos >/dev/null 2>&1; then
+        capinfos "$capture"
+    fi
+    echo
+    tshark -r "$capture" -q -z io,phs
+    echo
+    tshark -r "$capture" -q -z conv,ip
+    pause_menu
+}
+
+arp_monitor() {
+    header
+    echo '[ ARP CHANGE MONITOR ]'
+    echo 'Monitoring local neighbor-table changes. Ctrl+C stops.'
+    echo
+    timestamp=$(date +"%Y%m%d_%H%M%S")
+    report="$REPORT_DIR/arp_monitor_${timestamp}.txt"
+    local previous current
+    previous=$(ip neigh show)
+    echo "Started: $(date)" > "$report"
+    while true; do
+        sleep 5 || break
+        current=$(ip neigh show)
+        if [ "$current" != "$previous" ]; then
+            {
+                echo
+                echo "Changed: $(date)"
+                echo "$current"
+            } | tee -a "$report"
+            previous="$current"
+        fi
+    done
+    echo "[+] Report: $report"
+    pause_menu
+}
+
+security_audit() {
+    header
+    echo '[ LOCAL SECURITY AUDIT ]'
+    echo
+    timestamp=$(date +"%Y%m%d_%H%M%S")
+    report="$REPORT_DIR/security_audit_${timestamp}.txt"
+    {
+        echo 'HACKBOX LOCAL SECURITY AUDIT'
+        echo "Time: $(date)"
+        echo
+        echo '[ HOST ]'
+        hostname
+        uname -a
+        uptime
+        echo
+        echo '[ LISTENING SERVICES ]'
+        ss -tuln
+        echo
+        echo '[ LOGGED-IN USERS ]'
+        who
+        echo
+        echo '[ UFW STATUS ]'
+        if command -v ufw >/dev/null 2>&1; then
+            sudo ufw status verbose
+        else
+            echo 'UFW not installed'
+        fi
+        echo
+        echo '[ SSH AUTHENTICATION SETTINGS ]'
+        if command -v sshd >/dev/null 2>&1; then
+            sudo sshd -T 2>/dev/null | grep -Ei '^(passwordauthentication|pubkeyauthentication|permitrootlogin) '
+        else
+            echo 'sshd command not found'
+        fi
+        echo
+        echo '[ RECENT FAILED SSH LOGINS ]'
+        if command -v journalctl >/dev/null 2>&1; then
+            sudo journalctl -u ssh --no-pager -n 150 2>/dev/null | grep -Ei 'failed password|authentication failure' | tail -n 15 || true
+        fi
+    } | tee "$report"
+    echo
+    echo "[+] Audit saved: $report"
+    pause_menu
+}
+
+saved_results() {
+    header
+    echo '[ SAVED RESULTS ]'
+    echo
+    for directory in "$RECON_DIR" "$NETWORK_DIR" "$REPORT_DIR"; do
+        echo "--- $directory ---"
+        find "$directory" -maxdepth 1 -type f -printf '%TY-%Tm-%Td %TH:%TM  %f\n' | sort -r | head -n 40
+        echo
+    done
+    pause_menu
+}
+
+dns_device_monitor() {
+
+    header
+
+    echo "[ DNS DEVICE MONITOR ]"
+    echo "======================"
+    echo
+    echo "Shows DNS queries visible to this Raspberry Pi."
+    echo "Only monitor networks and devices you are authorized to monitor."
+    echo "A switched LAN typically hides other devices' unicast DNS traffic."
+    echo
+
+    if ! command -v tshark >/dev/null 2>&1; then
+        echo "[-] tshark is not installed."
+        echo
+        echo "Install it with:"
+        echo "sudo apt install -y tshark"
+        pause_menu
+        return
+    fi
+
+    timestamp=$(date +"%Y%m%d_%H%M%S")
+    report="$REPORT_DIR/dns_monitor_${timestamp}.txt"
+
+    interface=$(ip route | awk '/default/ {print $5; exit}')
+
+    if [ -z "$interface" ]; then
+        echo "[-] Could not determine the network interface."
+        pause_menu
+        return
+    fi
+
+    echo "[+] Interface: $interface"
+    echo
+    echo "Listening for DNS queries..."
+    echo
+    echo "Press Ctrl+C to stop."
+    echo
+
+    echo "DNS DEVICE MONITOR" > "$report"
+    echo "==================" >> "$report"
+    echo "Started: $(date)" >> "$report"
+    echo "Interface: $interface" >> "$report"
+    echo >> "$report"
+
+    echo "------------------------------------------------------------"
+    printf "%-18s %-40s\n" "DEVICE IP" "DOMAIN"
+    echo "------------------------------------------------------------"
+
+    sudo tshark \
+        -l \
+        -i "$interface" \
+        -f "udp port 53 or tcp port 53" \
+        -Y "dns.flags.response == 0 && dns.qry.name" \
+        -T fields \
+        -E separator='|' \
+        -e ip.src \
+        -e dns.qry.name 2>/dev/null |
+    while IFS='|' read -r device domain; do
+
+        [ -z "$device" ] && continue
+        [ -z "$domain" ] && continue
+
+        printf "%-18s %-40s\n" "$device" "$domain"
+
+        printf "%-18s %-40s\n" \
+            "$device" "$domain" >> "$report"
+
+    done
+
+    echo
+    echo "[+] Report saved:"
+    echo "    $report"
+
+    pause_menu
+}
+
+while true; do
+
+    header
+
+    echo "1) LAN Device Inventory"
+    echo "2) Nmap OS / Device Identification"
+    echo "3) Network Discovery"
+    echo "4) Network Information"
+    echo "5) Service Discovery"
+    echo "6) DNS Lookup"
+    echo "7) Packet Capture"
+    echo "8) Wi-Fi Reconnaissance"
+    echo "9) Wi-Fi Passive Capture"
+    echo "10) PCAP Analysis"
+    echo "11) ARP Change Monitor"
+    echo "12) Local Security Audit"
+    echo "13) Saved Results"
+    echo "14) DNS Device Monitor"
+    echo "0) Exit"
+    echo
+
+    read -rp "Select an option: " choice || exit 0
+
+    case "$choice" in
+
+        1)
+            network_inventory
+            ;;
+
+        2)
+            nmap_device_identification
+            ;;
+
+        3)
+            network_discovery
+            ;;
+
+        4)
+            network_info
+            ;;
+
+        5)
+            service_scan
+            ;;
+
+        6)
+            dns_lookup
+            ;;
+
+        7)
+            packet_capture
+            ;;
+
+        8)
+            wifi_recon
+            ;;
+
+        9)
+            wifi_capture
+            ;;
+
+        10)
+            pcap_analysis
+            ;;
+
+        11)
+            arp_monitor
+            ;;
+
+        12)
+            security_audit
+            ;;
+
+        13)
+            saved_results
+            ;;
+
+        14)
+            dns_device_monitor
+            ;;
+
+        0)
+            echo
+            echo "[+] Exiting Hackbox."
+            exit 0
+            ;;
+
+        *)
+            echo
+            echo "[-] Invalid option."
+            sleep 1
+            ;;
+
+    esac
+
+done
