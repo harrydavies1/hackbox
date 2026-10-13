@@ -84,7 +84,7 @@ The included Python helpers and the security-recon launcher reproduce code from 
 
 ## Quick start
 
-The repository is **private**. Use a GitHub account with access and Git credentials or an SSH key to clone:
+This is a **public repository**. Anyone can clone it over HTTPS without a GitHub account, access token, or SSH key:
 
 ~~~bash
 git clone https://github.com/harrydavies1/hackbox.git
@@ -184,7 +184,7 @@ Look under **~/security/recon**, **~/security/network**, and **~/security/report
 
 ## Security and privacy
 
-Only capture or scan authorized traffic. The **.gitignore** excludes common PCAP formats, private keys, environment files and reports; **always review git status before pushing**. A private repository is still not appropriate for credentials or sensitive traffic dumps.
+Only capture or scan authorized traffic. The **.gitignore** excludes common PCAP formats, private keys, environment files and reports; **always review git status before pushing**. Because this repository is **public**, never commit credentials, private keys, personal device details, network captures, or sensitive traffic logs. A `.gitignore` helps prevent accidental commits, but it is not a substitute for checking what you stage and push.
 
 ## Testing status
 
