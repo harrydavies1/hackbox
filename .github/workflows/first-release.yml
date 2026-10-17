@@ -1,0 +1,49 @@
+name: Publish Hackbox v0.1.0
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - .github/workflows/first-release.yml
+
+permissions:
+  contents: write
+
+jobs:
+  first-release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Create first release if missing
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_SHA: ${{ github.sha }}
+        run: |
+          if gh release view v0.1.0 >/dev/null 2>&1; then
+            echo "Release v0.1.0 already exists; leaving it unchanged."
+            exit 0
+          fi
+          cat > "$RUNNER_TEMP/release-notes.md" <<'NOTES'
+          ## Hackbox v0.1.0 — Initial Release
+
+          First public release of Hackbox, a lightweight Raspberry Pi security toolkit for **authorized network testing and diagnostics**.
+
+          ### Included
+          - 14-option Bash menu covering LAN device inventory, network and service discovery, Nmap OS identification, DNS queries and monitoring, packet capture, Wi-Fi reconnaissance, PCAP analysis, ARP change monitoring, and local security auditing.
+          - Python Nmap discovery and report summarization helpers, plus a Bash recon launcher.
+          - Setup instructions, Raspberry Pi 3B hardware requirements, Wi-Fi adapter guidance, and troubleshooting in the README.
+
+          ### Hardware and software
+          - Developed and partially tested on a **Raspberry Pi 3 Model B** running **Raspberry Pi OS Lite 64-bit**.
+          - Ethernet is recommended. An external monitor-capable Wi-Fi adapter (such as a genuine Atheros AR9271 model) is needed for the Wi-Fi passive-capture menu on the tested Pi; the built-in Wi-Fi does not advertise monitor mode.
+
+          ### Known limitations
+          - This code snapshot was reconstructed from earlier Hackbox scripts and chat discussions. The **complete 14-option GitHub version is not yet tested end-to-end on the Pi**.
+          - Wi-Fi monitor-mode dongles and device-to-domain DNS attribution have not been verified end-to-end. On a typical switched LAN, a Pi cannot passively observe other devices' unicast DNS queries.
+          - Use Hackbox only on systems and networks you own or are expressly authorized to assess.
+
+          See the [README](https://github.com/harrydavies1/hackbox#readme) for installation and troubleshooting.
+          NOTES
+          gh release create v0.1.0 --target "$RELEASE_SHA" --title "Hackbox v0.1.0 — Initial Release" --notes-file "$RUNNER_TEMP/release-notes.md" --latest
